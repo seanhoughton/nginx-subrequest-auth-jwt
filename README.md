@@ -9,27 +9,35 @@ The configuration format currently only supports a single elliptic curve public 
 # Configuration
 A number of flags affect how the service is started:
 
-Flag     | Description | Default
----------|-------------|--------------------
-  --help | Show help | -
-  --config | Path to configuration file | config.yaml
-  --log-level| Log level | info
-  --tls-key | Path to TLS key | `<required>`
-  --tls-cert | Path to TLS cert | `<required>`
-  --addr | Address/port to serve traffic in TLS mode | :8443
-  --insecure | Serve traffic unencrypted over http | false
-  --insecure-addr | Address/port to serve traffic in insecure mode | :8080
+| Flag            | Description                                    | Default      |
+| --------------- | ---------------------------------------------- | ------------ |
+| --help          | Show help                                      | -            |
+| --config        | Path to configuration file                     | config.yaml  |
+| --log-level     | Log level                                      | info         |
+| --tls-key       | Path to TLS key                                | `<required>` |
+| --tls-cert      | Path to TLS cert                               | `<required>` |
+| --addr          | Address/port to serve traffic in TLS mode      | :8443        |
+| --insecure      | Serve traffic unencrypted over http            | false        |
+| --insecure-addr | Address/port to serve traffic in insecure mode | :8080        |
 
 ## Configuration file
 The service takes a configuration file in YAML format, by default `config.yaml`. For example:
 
 ```yaml
 validationKeys:
-  - type: ecPublicKey
+  "PrvXWe...ZE45qALQ":
+    type: ecPublicKey
     key: |
       -----BEGIN PUBLIC KEY-----
       ...
       -----END PUBLIC KEY-----
+  "K26NK24...HfPuZWhg":
+    type: rsaPublicKey
+    key: |
+      -----BEGIN PUBLIC KEY-----
+      ...
+      -----END PUBLIC KEY-----
+
 claimsSource: static
 claims:
   - group:
@@ -37,7 +45,9 @@ claims:
       - administrators
 ```
 
-With this configuration, a JWT will be validated against the given public key, and the claims are then matched against the given structure, meaning there has to be a `group` claim, with either a `developers` or `administrators` value.
+With this configuration, a JWT will be validated against the given public keys, and the claims are then matched against the given structure, meaning there has to be a `group` claim, with either a `developers` or `administrators` value.
+
+Keys are indexed by the `kid` field in the incoming JWT token.
 
 Claims can either be statically set, as in the above example, or passed via query string parameters. The `claimsSource` configuration parameter controls which mode the server operates in, and can be either `static` or `queryString`. Further examples of the two modes are given below.
 

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/ecdsa"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -10,8 +9,8 @@ import (
 
 	"github.com/carlpett/nginx-subrequest-auth-jwt/logger"
 
-	"github.com/dgrijalva/jwt-go"
-	"github.com/dgrijalva/jwt-go/request"
+	"github.com/golang-jwt/jwt"
+	"github.com/golang-jwt/jwt/request"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"gopkg.in/alecthomas/kingpin.v2"
@@ -48,7 +47,7 @@ func init() {
 }
 
 type server struct {
-	PublicKey    *ecdsa.PublicKey
+	PublicKeys   map[string]interface{}
 	Logger       logger.Logger
 	ClaimsSource string
 	StaticClaims []map[string][]string
@@ -66,10 +65,24 @@ func newServer(logger logger.Logger, configFilePath string) (*server, error) {
 		return nil, err
 	}
 
-	// TODO: Only supports a single EC PubKey for now
-	pubkey, err := jwt.ParseECPublicKeyFromPEM([]byte(config.ValidationKeys[0].KeyMaterial))
-	if err != nil {
-		return nil, err
+	pubkeys := map[string]interface{}{}
+
+	for id, k := range config.ValidationKeys {
+		switch k.Type {
+		case "ecPublicKey":
+			pubkey, err := jwt.ParseECPublicKeyFromPEM([]byte(k.KeyMaterial))
+			if err != nil {
+				return nil, err
+			} else {
+				pubkeys[id] = pubkey
+			}
+		case "rsaPublicKey":
+			if pubkey, err := jwt.ParseRSAPublicKeyFromPEM([]byte(k.KeyMaterial)); err != nil {
+				return nil, err
+			} else {
+				pubkeys[id] = pubkey
+			}
+		}
 	}
 
 	if !contains([]string{"static", "queryString"}, config.ClaimsSource) {
@@ -81,7 +94,7 @@ func newServer(logger logger.Logger, configFilePath string) (*server, error) {
 	}
 
 	return &server{
-		PublicKey:    pubkey,
+		PublicKeys:   pubkeys,
 		Logger:       logger,
 		ClaimsSource: config.ClaimsSource,
 		StaticClaims: config.StaticClaims,
@@ -94,9 +107,9 @@ type validationKey struct {
 }
 
 type config struct {
-	ValidationKeys []validationKey       `yaml:"validationKeys"`
-	ClaimsSource   string                `yaml:"claimsSource"`
-	StaticClaims   []map[string][]string `yaml:"claims"`
+	ValidationKeys map[string]validationKey `yaml:"validationKeys"`
+	ClaimsSource   string                   `yaml:"claimsSource"`
+	StaticClaims   []map[string][]string    `yaml:"claims"`
 }
 
 var (
@@ -191,11 +204,19 @@ func (s *server) validateDeviceToken(r *http.Request) bool {
 
 	var claims jwt.MapClaims
 	token, err := request.ParseFromRequestWithClaims(r, request.AuthorizationHeaderExtractor, &claims, func(token *jwt.Token) (interface{}, error) {
-		// TODO: Only supports EC for now
-		if _, ok := token.Method.(*jwt.SigningMethodECDSA); !ok {
-			return nil, fmt.Errorf("Unexpected signing method: %v", token.Header["alg"])
+		if keyID, hasKID := token.Header["kid"]; hasKID {
+			if id, isStr := keyID.(string); isStr {
+				if tok, hasKey := s.PublicKeys[id]; !hasKey {
+					return nil, fmt.Errorf("Unexpected signing method: %v", token.Header["alg"])
+				} else {
+					return tok, nil
+				}
+			} else {
+				return nil, fmt.Errorf("Malformed kid value: %v", token.Header["keyID"])
+			}
+		} else {
+			return nil, fmt.Errorf("No key configured for kid '%v'", keyID)
 		}
-		return s.PublicKey, nil
 	})
 	if err != nil {
 		s.Logger.Debugw("Failed to parse token", "err", err)
